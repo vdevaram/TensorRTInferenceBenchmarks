@@ -81,8 +81,8 @@ for implementation details.
 4. Clone and build this project
 
     ```
-    git clone --recursive https://github.com/NVIDIA-Jetson/tf_to_trt_image_classification.git
-    cd tf_to_trt_image_classification
+    git clone --recursive https://github.com/vdevaram/TensorRTInferenceBenchmarks.git
+    cd TensorRTInferenceBenchmarks
     mkdir build
     cd build
     cmake ..
@@ -106,7 +106,7 @@ Next, because the TensorFlow models are provided in checkpoint format, we must c
 python scripts/models_to_frozen_graphs.py
 ```
 
-If you removed any models in the previous step, you must add ``'exclude': true`` to the corresponding item in the [NETS](scripts/model_meta.py#L67) dictionary located in [scripts/model_meta.py](scripts/model_meta.py).  If you are following the instructions for executing engines below, you may also need some sample images.  Run the following script to download a few images from ImageNet.
+If you removed any models in the previous step, you must add ``'exclude': true`` to the corresponding item in the [NETS](scripts/model_meta.py#L67) dictionary located in [scripts/model_meta.py](scripts/model_meta.py).  If you are following the instructions for executing engines below, you may also need some sample images.  Run the following script to download a few images from ImageNet. This script downloads and creates a list.txt file which will have all the list of images with absolute paths. please update list.txt if customized images to be loaded. 
 
 ```
 source scripts/download_images.sh
@@ -158,14 +158,13 @@ We provide two image label files in the [data folder](data/).  Some of the Tenso
 <a name="benchmark"></a>
 ## Benchmark all models
 
-To benchmark all of the models, first convert all of the models that you [downloaded above](#download) into TensorRT engines.  Run the following script to convert all models
+To benchmark all of the models, first convert all of the models that you [downloaded above](#download) into TensorRT engines.  Run the following script to convert all models. If you want to change parameters related to TensorRT optimization, just edit the [scripts/frozen_graphs_to_plans.py](scripts/frozen_graphs_to_plans.py) file. Change data format and batch size if needed.
 
 ```
 python scripts/frozen_graphs_to_plans.py
 ```
 
-If you want to change parameters related to TensorRT optimization, just edit the [scripts/frozen_graphs_to_plans.py](scripts/frozen_graphs_to_plans.py) file.
-Next, to benchmark all of the models run the [scripts/test_trt.py](scripts/test_trt.py) script
+Next, to benchmark all of the models run the [scripts/test_trt.py](scripts/test_trt.py) script. Change data format and batch size if needed.
 
 ```
 python scripts/test_trt.py
