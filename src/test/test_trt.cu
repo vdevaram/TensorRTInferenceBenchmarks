@@ -24,7 +24,7 @@ using namespace nvinfer1;
 class TestConfig;
 
 typedef void (*preprocess_fn_t)(float *input, size_t channels, size_t height, size_t width);
-float * imageToTensor(const cv::Mat & image);
+void imageToTensor(const cv::Mat & image);
 void preprocessVgg(float *input, size_t channels, size_t height, size_t width);
 void preprocessInception(float *input, size_t channels, size_t height, size_t width);
 size_t argmax(float *input, size_t numel);
@@ -172,7 +172,7 @@ int main(int argc, char * argv[])
 }
 
 
-float *imageToTensor(const cv::Mat & image)
+void imageToTensor(const cv::Mat & image, int batch_num, float *tensor)
 {
   const size_t height = image.rows;
   const size_t width = image.cols;
@@ -182,8 +182,6 @@ float *imageToTensor(const cv::Mat & image)
   const size_t stridesCv[3] = { width * channels, channels, 1 };
   const size_t strides[3] = { height * width, width, 1 };
 
-  float * tensor;
-  cudaHostAlloc((void**)&tensor, numel * sizeof(float), cudaHostAllocMapped);
 
   for (int i = 0; i < height; i++) 
   {
@@ -193,12 +191,11 @@ float *imageToTensor(const cv::Mat & image)
       {
         const size_t offsetCv = i * stridesCv[0] + j * stridesCv[1] + k * stridesCv[2];
         const size_t offset = k * strides[0] + i * strides[1] + j * strides[2];
-        tensor[offset] = (float) image.data[offsetCv];
+        tensor[numel * batch_num + offset] = (float) image.data[offsetCv];
       }
     }
   }
 
-  return tensor;
 }
 
 
@@ -264,30 +261,58 @@ void test(const TestConfig &testConfig)
   inputBindingIndex = engine->getBindingIndex(testConfig.inputNodeName.c_str());
   outputBindingIndex = engine->getBindingIndex(testConfig.outputNodeName.c_str());
 
-  // load and preprocess image
-  cv::Mat image = cv::imread(testConfig.imagePath, CV_LOAD_IMAGE_COLOR);
-  cv::cvtColor(image, image, cv::COLOR_BGR2RGB, 3);
-  cv::resize(image, image, cv::Size(testConfig.InputWidth(), testConfig.InputHeight()));
-  float *input = imageToTensor(image);
-  testConfig.PreprocessFn()(input, 3, testConfig.InputHeight(), testConfig.InputWidth());
-
+  int batch_size = testConfig.MaxBatchSize();
+  std::cout << "Batch size is " << batch_size << std::endl;
+  size_t img_size  =  testConfig.InputWidth() * testConfig.InputHeight() * 3; 
+  size_t numel = batch_size * img_size; 
+  float * tensor;
+  cudaHostAlloc((void**)&tensor, numel * sizeof(float), cudaHostAllocMapped);
+  // load and preprocess images
+  std::string fileName;
+  std::vector<std::string> fileList;
+  std::ifstream file (testConfig.imagePath,std::ios::in);
+  if (!file) 
+  { 
+    std::cout << "Unable to open file "<< testConfig.imagePath << std::endl; 
+    return ;
+  }
+  while (!file.eof())
+  {
+    file >> fileName;
+    fileList.push_back(fileName);
+  }
+  if (fileList.size() < batch_size) 
+  { 
+    std::cout << "Number of images in the path are less than batch size\n";
+    return;
+  }
+  for (int batch = 0; batch < batch_size ; batch++)
+  {
+    std::string fName;
+    fName = fileList[batch];
+    cv::Mat image = cv::imread(fName, CV_LOAD_IMAGE_COLOR);
+    cv::cvtColor(image, image, cv::COLOR_BGR2RGB, 3);
+    cv::resize(image, image, cv::Size(testConfig.InputWidth(), testConfig.InputHeight()));
+    imageToTensor(image,batch,tensor);
+    testConfig.PreprocessFn()(tensor+batch*img_size, 3, testConfig.InputHeight(), testConfig.InputWidth());
+  }
   // allocate memory on host / device for input / output
   float *output;
   float *inputDevice;
   float *outputDevice;
-  size_t inputSize = testConfig.InputHeight() * testConfig.InputWidth() * 3 * sizeof(float);
+  size_t inputSize = batch_size * testConfig.InputHeight() * testConfig.InputWidth() * 3 * sizeof(float);
 
-  cudaHostAlloc(&output, testConfig.NumOutputCategories() * sizeof(float), cudaHostAllocMapped);
+  cudaHostAlloc(&output, batch_size * testConfig.NumOutputCategories() * sizeof(float), cudaHostAllocMapped);
 
   if (testConfig.UseMappedMemory())
   {
-    cudaHostGetDevicePointer(&inputDevice, input, 0);
+    cudaHostGetDevicePointer(&inputDevice, tensor, 0);
     cudaHostGetDevicePointer(&outputDevice, output, 0);
   }
   else
   {
     cudaMalloc(&inputDevice, inputSize);
-    cudaMalloc(&outputDevice, testConfig.NumOutputCategories() * sizeof(float));
+    cudaMalloc(&outputDevice, batch_size * testConfig.NumOutputCategories() * sizeof(float));
   }
 
   float *bindings[2];
@@ -310,9 +335,9 @@ void test(const TestConfig &testConfig)
     else 
     {
       auto t0 = chrono::steady_clock::now();
-      cudaMemcpy(inputDevice, input, inputSize, cudaMemcpyHostToDevice);
-      context->execute(1, (void**)bindings);
-      cudaMemcpy(output, outputDevice, testConfig.NumOutputCategories() * sizeof(float), cudaMemcpyDeviceToHost);
+      cudaMemcpy(inputDevice, tensor, inputSize, cudaMemcpyHostToDevice);
+      context->execute(batch_size, (void**)bindings);
+      cudaMemcpy(output, outputDevice, batch_size * testConfig.NumOutputCategories() * sizeof(float), cudaMemcpyDeviceToHost);
       auto t1 = chrono::steady_clock::now();
       diff = t1 - t0;
     }
@@ -324,8 +349,11 @@ void test(const TestConfig &testConfig)
   avgTime /= testConfig.NumRuns();
 
   // save results to file
-  int maxCategoryIndex = argmax(output, testConfig.NumOutputCategories()) + 1001 - testConfig.NumOutputCategories();
-  cout << "Most likely category id is " << maxCategoryIndex << endl;
+  for (int batch = 0; batch < batch_size ;batch++)
+  {
+    int maxCategoryIndex = argmax(output+batch*testConfig.NumOutputCategories(), testConfig.NumOutputCategories()) + 1001 - testConfig.NumOutputCategories();
+    cout << "Most likely category id for " << fileList[batch] << " is " << maxCategoryIndex << endl;
+  }
   cout << "Average execution time in ms is " << avgTime << endl;
   ofstream outfile;
   outfile.open(testConfig.statsPath, ios_base::app);
@@ -344,7 +372,7 @@ void test(const TestConfig &testConfig)
   cudaFree(inputDevice);
   cudaFree(outputDevice);
 
-  cudaFreeHost(input);
+  cudaFreeHost(tensor);
   cudaFreeHost(output);
 
   engine->destroy();

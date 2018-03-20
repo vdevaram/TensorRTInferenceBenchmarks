@@ -30,7 +30,7 @@ if __name__ == '__main__':
             net_meta['input_height'],
             net_meta['input_width'],
             net_meta['output_names'][0],
-            1, # batch size
+            32, # batch size
             1 << 20, # workspace size
-            'half' # data type
+            'float' # data type
         )

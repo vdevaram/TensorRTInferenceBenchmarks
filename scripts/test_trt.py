@@ -9,7 +9,7 @@ import os
 import subprocess
 import pdb
 
-TEST_IMAGE_PATH='data/images/gordon_setter.jpg'
+TEST_IMAGE_PATH='data/images/list.txt'
 TEST_OUTPUT_PATH='data/test_output_trt.txt'
 TEST_EXE_PATH='./build/src/test/test_trt'
 
@@ -33,8 +33,8 @@ if __name__ == '__main__':
             str(net_meta['num_classes']), 
             net_meta['preprocess_fn'].__name__,
             str(50), # numRuns
-            "half", # dataType 
-            str(1), # maxBatchSize 
+            "float", # dataType 
+            str(32), # maxBatchSize 
             str(1 << 20), # workspaceSize 
             str(0), # useMappedMemory 
             TEST_OUTPUT_PATH
